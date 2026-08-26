@@ -366,13 +366,17 @@ func resourceFeatureV2ImportState(ctx context.Context, d *schema.ResourceData, m
 		return nil, fmt.Errorf("error reading feature %s in project %s: %w", featureName, projectId, err)
 	}
 
-	_ = d.Set("environment", flattenEnvironments(feature.Environments))
+if err := d.Set("environment", flattenEnvironments(feature.Environments)); err != nil {
+		return nil, fmt.Errorf("error setting environments for feature %s: %w", featureName, err)
+	}
 
 	featureTags, _, err := client.FeatureTags.GetAllFeatureTags(featureName)
 	if err != nil {
 		return nil, fmt.Errorf("error reading tags for feature %s: %w", featureName, err)
 	}
-	_ = d.Set("tag", flattenTags(featureTags.Tags))
+	if err := d.Set("tag", flattenTags(featureTags.Tags)); err != nil {
+		return nil, fmt.Errorf("error setting tags for feature %s: %w", featureName, err)
+	}
 
 	return []*schema.ResourceData{d}, nil
 }
