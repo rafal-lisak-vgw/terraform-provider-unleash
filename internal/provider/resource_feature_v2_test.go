@@ -283,6 +283,62 @@ resource "unleash_feature_v2" "import_complex" {
 	})
 }
 
+func TestAccResourceFeatureV2_importWithDuplicateTagValues(t *testing.T) {
+	featureName := fmt.Sprintf("import_duptag_%s", utils.RandomString(4))
+	resourceName := "unleash_feature_v2.import_duptag"
+	tagType := fmt.Sprintf("test%s", utils.RandomString(4))
+
+	resource.UnitTest(t, resource.TestCase{
+		PreCheck: func() {
+			testAccPreCheck(t)
+			createTagType(t, tagType)
+		},
+		ProviderFactories: providerFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+resource "unleash_feature_v2" "import_duptag" {
+  name               = "%s"
+  description        = "import test with same-value different-type tags"
+  type               = "release"
+  project_id         = "default"
+  archive_on_destroy = false
+
+  environment {
+    name    = "development"
+    enabled = false
+  }
+
+  environment {
+    name    = "production"
+    enabled = false
+  }
+
+  tag {
+    type  = "simple"
+    value = "shared-value"
+  }
+
+  tag {
+    type  = "%s"
+    value = "shared-value"
+  }
+}`, featureName, tagType),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "tag.#", "2"),
+				),
+			},
+			{
+				ResourceName:            resourceName,
+				ImportState:             true,
+				ImportStateId:           fmt.Sprintf("default/%s", featureName),
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"archive_on_destroy"},
+			},
+		},
+	})
+}
+
 func TestAccResourceFeatureV2_builtinContextFallback(t *testing.T) {
 	featureName := fmt.Sprintf("builtin_ctx_feature_%s", utils.RandomString(4))
 
@@ -541,6 +597,25 @@ resource "unleash_feature_v2" "custom_fail" {
 	})
 }
 
+func TestResourceFeatureV2ImportState_parsesCompositeId(t *testing.T) {
+	d := schema.TestResourceDataRaw(t, resourceFeatureV2().Schema, map[string]interface{}{})
+	d.SetId("my-project/my-feature")
+
+	results, err := resourceFeatureV2ImportState(context.Background(), d, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Id() != "my-feature" {
+		t.Errorf("expected ID 'my-feature', got %q", results[0].Id())
+	}
+	if results[0].Get("project_id") != "my-project" {
+		t.Errorf("expected project_id 'my-project', got %q", results[0].Get("project_id"))
+	}
+}
+
 func TestResourceFeatureV2ImportState_rejectsInvalidId(t *testing.T) {
 	cases := []string{"", "no-slash", "/no-project", "no-feature/", "project/feature/extra"}
 	for _, id := range cases {
@@ -589,6 +664,47 @@ func createContextField(t *testing.T, name string) {
 		delResp, err := http.DefaultClient.Do(delReq)
 		if err != nil {
 			t.Logf("failed to delete context field %q: %v", name, err)
+			return
+		}
+		delResp.Body.Close()
+	})
+}
+
+func createTagType(t *testing.T, name string) {
+	t.Helper()
+
+	apiURL := os.Getenv("UNLEASH_API_URL")
+	authToken := os.Getenv("UNLEASH_AUTH_TOKEN")
+
+	body := fmt.Sprintf(`{"name": "%s", "description": "test tag type"}`, name)
+	req, err := http.NewRequest("POST", strings.TrimRight(apiURL, "/")+"/admin/tag-types", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", authToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed to create tag type: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 201 {
+		t.Fatalf("failed to create tag type %q: status %d", name, resp.StatusCode)
+	}
+
+	t.Cleanup(func() {
+		delReq, err := http.NewRequest("DELETE", strings.TrimRight(apiURL, "/")+"/admin/tag-types/"+name, nil)
+		if err != nil {
+			t.Logf("failed to build delete request for tag type %q: %v", name, err)
+			return
+		}
+		delReq.Header.Set("Authorization", authToken)
+
+		delResp, err := http.DefaultClient.Do(delReq)
+		if err != nil {
+			t.Logf("failed to delete tag type %q: %v", name, err)
 			return
 		}
 		delResp.Body.Close()

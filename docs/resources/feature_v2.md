@@ -178,3 +178,12 @@ Required:
 Optional:
 
 - `type` (String) Tag type. Default is `simple`.
+
+## Import
+
+Import is supported using the following syntax:
+
+```shell
+# Import using the composite ID format: project_id/feature_name
+terraform import unleash_feature_v2.example default/my-feature-flag
+```

@@ -301,6 +301,11 @@ func resourceFeatureV2Read(ctx context.Context, d *schema.ResourceData, meta int
 
 	var diags diag.Diagnostics
 
+	// name is Required and always present in state after Create or a previous Read.
+	// It is empty only when Read runs immediately after ImportState.
+	_, isImport := d.GetOk("name")
+	isImport = !isImport
+
 	featureName := d.Id()
 	projectId := d.Get("project_id").(string)
 	feature, _, err := client.FeatureToggles.GetFeatureByName(projectId, featureName)
@@ -317,32 +322,43 @@ func resourceFeatureV2Read(ctx context.Context, d *schema.ResourceData, meta int
 	_ = d.Set("project_id", feature.Project)
 	_ = d.Set("impression_data", feature.ImpressionData)
 
-	if e, ok := d.GetOk("environment"); ok {
-		toSave := []api.Environment{}
-		for _, tfEnvironment := range e.([]interface{}) {
-			for _, env := range feature.Environments {
-				if tfEnvironment.(map[string]interface{})["name"] == env.Name {
-					toSave = append(toSave, env)
-				}
-			}
-		}
-		_ = d.Set("environment", flattenEnvironments(toSave))
-	}
+	if isImport {
+		_ = d.Set("environment", flattenEnvironments(feature.Environments))
 
-	if t, ok := d.GetOk("tag"); ok {
 		featureTags, _, err := client.FeatureTags.GetAllFeatureTags(feature.Name)
 		if err != nil {
 			return diag.FromErr(err)
 		}
-		toSave := []api.FeatureTag{}
-		for _, tfTag := range t.([]interface{}) {
-			for _, tag := range featureTags.Tags {
-				if tfTag.(map[string]interface{})["value"] == tag.Value {
-					toSave = append(toSave, tag)
+		_ = d.Set("tag", flattenTags(featureTags.Tags))
+	} else {
+		if e, ok := d.GetOk("environment"); ok {
+			toSave := []api.Environment{}
+			for _, tfEnvironment := range e.([]interface{}) {
+				for _, env := range feature.Environments {
+					if tfEnvironment.(map[string]interface{})["name"] == env.Name {
+						toSave = append(toSave, env)
+					}
 				}
 			}
+			_ = d.Set("environment", flattenEnvironments(toSave))
 		}
-		_ = d.Set("tag", flattenTags(toSave))
+
+		if t, ok := d.GetOk("tag"); ok {
+			featureTags, _, err := client.FeatureTags.GetAllFeatureTags(feature.Name)
+			if err != nil {
+				return diag.FromErr(err)
+			}
+			toSave := []api.FeatureTag{}
+			for _, tfTag := range t.([]interface{}) {
+				tfTagMap := tfTag.(map[string]interface{})
+				for _, tag := range featureTags.Tags {
+					if tfTagMap["type"] == tag.Type && tfTagMap["value"] == tag.Value {
+						toSave = append(toSave, tag)
+					}
+				}
+			}
+			_ = d.Set("tag", flattenTags(toSave))
+		}
 	}
 
 	return diags
@@ -353,31 +369,8 @@ func resourceFeatureV2ImportState(ctx context.Context, d *schema.ResourceData, m
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return nil, fmt.Errorf("unexpected format of ID (%s), expected project_id/feature_name", d.Id())
 	}
-	projectId := parts[0]
-	featureName := parts[1]
-
-	_ = d.Set("project_id", projectId)
-	d.SetId(featureName)
-
-	client := meta.(*ApiClients).PhilipsUnleashClient
-
-	feature, _, err := client.FeatureToggles.GetFeatureByName(projectId, featureName)
-	if err != nil {
-		return nil, fmt.Errorf("error reading feature %s in project %s: %w", featureName, projectId, err)
-	}
-
-	if err := d.Set("environment", flattenEnvironments(feature.Environments)); err != nil {
-		return nil, fmt.Errorf("error setting environments for feature %s: %w", featureName, err)
-	}
-
-	featureTags, _, err := client.FeatureTags.GetAllFeatureTags(featureName)
-	if err != nil {
-		return nil, fmt.Errorf("error reading tags for feature %s: %w", featureName, err)
-	}
-	if err := d.Set("tag", flattenTags(featureTags.Tags)); err != nil {
-		return nil, fmt.Errorf("error setting tags for feature %s: %w", featureName, err)
-	}
-
+	_ = d.Set("project_id", parts[0])
+	d.SetId(parts[1])
 	return []*schema.ResourceData{d}, nil
 }
 
