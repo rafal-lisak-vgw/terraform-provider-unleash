@@ -366,7 +366,7 @@ func resourceFeatureV2ImportState(ctx context.Context, d *schema.ResourceData, m
 		return nil, fmt.Errorf("error reading feature %s in project %s: %w", featureName, projectId, err)
 	}
 
-if err := d.Set("environment", flattenEnvironments(feature.Environments)); err != nil {
+	if err := d.Set("environment", flattenEnvironments(feature.Environments)); err != nil {
 		return nil, fmt.Errorf("error setting environments for feature %s: %w", featureName, err)
 	}
 
