@@ -22,6 +22,10 @@ func resourceFeatureV2() *schema.Resource {
 		DeleteContext: resourceFeatureV2Delete,
 		CustomizeDiff: validateConstraintContextNames,
 
+		Importer: &schema.ResourceImporter{
+			StateContext: resourceFeatureV2ImportState,
+		},
+
 		// The descriptions are used by the documentation generator and the language server.
 		Schema: map[string]*schema.Schema{
 			"name": {
@@ -323,13 +327,15 @@ func resourceFeatureV2Read(ctx context.Context, d *schema.ResourceData, meta int
 			}
 		}
 		_ = d.Set("environment", flattenEnvironments(toSave))
+	} else {
+		_ = d.Set("environment", flattenEnvironments(feature.Environments))
 	}
 
+	featureTags, _, err := client.FeatureTags.GetAllFeatureTags(feature.Name)
+	if err != nil {
+		return diag.FromErr(err)
+	}
 	if t, ok := d.GetOk("tag"); ok {
-		featureTags, _, err := client.FeatureTags.GetAllFeatureTags(feature.Name)
-		if err != nil {
-			return diag.FromErr(err)
-		}
 		toSave := []api.FeatureTag{}
 		for _, tfTag := range t.([]interface{}) {
 			for _, tag := range featureTags.Tags {
@@ -338,11 +344,22 @@ func resourceFeatureV2Read(ctx context.Context, d *schema.ResourceData, meta int
 				}
 			}
 		}
-
 		_ = d.Set("tag", flattenTags(toSave))
+	} else {
+		_ = d.Set("tag", flattenTags(featureTags.Tags))
 	}
 
 	return diags
+}
+
+func resourceFeatureV2ImportState(ctx context.Context, d *schema.ResourceData, meta interface{}) ([]*schema.ResourceData, error) {
+	parts := strings.SplitN(d.Id(), "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return nil, fmt.Errorf("unexpected format of ID (%s), expected project_id/feature_name", d.Id())
+	}
+	_ = d.Set("project_id", parts[0])
+	d.SetId(parts[1])
+	return []*schema.ResourceData{d}, nil
 }
 
 func resourceFeatureV2Update(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {

@@ -128,6 +128,72 @@ resource "unleash_feature_v2" "foo" {
 }
 `, utils.RandomString(4))
 
+func TestAccResourceFeatureV2_import(t *testing.T) {
+	featureName := fmt.Sprintf("import_feature_%s", utils.RandomString(4))
+	resourceName := "unleash_feature_v2.import_test"
+
+	resource.UnitTest(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: providerFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+resource "unleash_feature_v2" "import_test" {
+  name               = "%s"
+  description        = "feature to import"
+  type               = "release"
+  project_id         = "default"
+  archive_on_destroy = false
+
+  environment {
+    name    = "development"
+    enabled = true
+
+    strategy {
+      name = "flexibleRollout"
+      parameters = {
+        rollout    = "100"
+        stickiness = "default"
+        groupId    = "toggle"
+      }
+    }
+  }
+
+  tag {
+    type  = "simple"
+    value = "import-test"
+  }
+}`, featureName),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "name", featureName),
+				),
+			},
+			{
+				ResourceName:            resourceName,
+				ImportState:             true,
+				ImportStateId:           fmt.Sprintf("default/%s", featureName),
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"archive_on_destroy"},
+			},
+		},
+	})
+}
+
+func TestAccResourceFeatureV2_importInvalidId(t *testing.T) {
+	resource.UnitTest(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: providerFactories,
+		Steps: []resource.TestStep{
+			{
+				ResourceName:  "unleash_feature_v2.import_test",
+				ImportState:   true,
+				ImportStateId: "missing-slash",
+				ExpectError:   regexp.MustCompile(`unexpected format of ID`),
+			},
+		},
+	})
+}
+
 func TestAccResourceFeatureV2_builtinContextFallback(t *testing.T) {
 	featureName := fmt.Sprintf("builtin_ctx_feature_%s", utils.RandomString(4))
 
@@ -384,6 +450,38 @@ resource "unleash_feature_v2" "custom_fail" {
 			},
 		},
 	})
+}
+
+func TestResourceFeatureV2ImportState_parsesCompositeId(t *testing.T) {
+	d := schema.TestResourceDataRaw(t, resourceFeatureV2().Schema, map[string]interface{}{})
+	d.SetId("my-project/my-feature")
+
+	results, err := resourceFeatureV2ImportState(context.Background(), d, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Id() != "my-feature" {
+		t.Errorf("expected ID 'my-feature', got %q", results[0].Id())
+	}
+	if results[0].Get("project_id") != "my-project" {
+		t.Errorf("expected project_id 'my-project', got %q", results[0].Get("project_id"))
+	}
+}
+
+func TestResourceFeatureV2ImportState_rejectsInvalidId(t *testing.T) {
+	cases := []string{"", "no-slash", "/no-project", "no-feature/"}
+	for _, id := range cases {
+		d := schema.TestResourceDataRaw(t, resourceFeatureV2().Schema, map[string]interface{}{})
+		d.SetId(id)
+
+		_, err := resourceFeatureV2ImportState(context.Background(), d, nil)
+		if err == nil {
+			t.Errorf("expected error for ID %q, got nil", id)
+		}
+	}
 }
 
 func createContextField(t *testing.T, name string) {
