@@ -711,4 +711,5 @@ func createTagType(t *testing.T, name string) {
 		if delResp.StatusCode != 200 && delResp.StatusCode != 204 {
 			t.Logf("failed to delete tag type %q: status %d", name, delResp.StatusCode)
 		}
+	})
 }
