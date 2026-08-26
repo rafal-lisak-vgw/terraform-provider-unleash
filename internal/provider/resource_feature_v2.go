@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -303,8 +304,7 @@ func resourceFeatureV2Read(ctx context.Context, d *schema.ResourceData, meta int
 
 	// name is Required and always present in state after Create or a previous Read.
 	// It is empty only when Read runs immediately after ImportState.
-	_, isImport := d.GetOk("name")
-	isImport = !isImport
+	isImport := d.Get("name").(string) == ""
 
 	featureName := d.Id()
 	projectId := d.Get("project_id").(string)
@@ -323,13 +323,27 @@ func resourceFeatureV2Read(ctx context.Context, d *schema.ResourceData, meta int
 	_ = d.Set("impression_data", feature.ImpressionData)
 
 	if isImport {
-		_ = d.Set("environment", flattenEnvironments(feature.Environments))
+		envs := feature.Environments
+		sort.Slice(envs, func(i, j int) bool {
+			return envs[i].Name < envs[j].Name
+		})
+		_ = d.Set("environment", flattenEnvironments(envs))
 
 		featureTags, _, err := client.FeatureTags.GetAllFeatureTags(feature.Name)
-		if err != nil {
-			return diag.FromErr(err)
+		if err != nil && err != api.ErrNotFound {
+			return diag.FromErr(fmt.Errorf("unable to read tags for feature %s during import: %w", feature.Name, err))
 		}
-		_ = d.Set("tag", flattenTags(featureTags.Tags))
+		var tags []api.FeatureTag
+		if featureTags != nil {
+			tags = featureTags.Tags
+		}
+		sort.Slice(tags, func(i, j int) bool {
+			if tags[i].Type != tags[j].Type {
+				return tags[i].Type < tags[j].Type
+			}
+			return tags[i].Value < tags[j].Value
+		})
+		_ = d.Set("tag", flattenTags(tags))
 	} else {
 		if e, ok := d.GetOk("environment"); ok {
 			toSave := []api.Environment{}
@@ -345,10 +359,14 @@ func resourceFeatureV2Read(ctx context.Context, d *schema.ResourceData, meta int
 
 		if t, ok := d.GetOk("tag"); ok {
 			featureTags, _, err := client.FeatureTags.GetAllFeatureTags(feature.Name)
-			if err != nil {
+			if err != nil && err != api.ErrNotFound {
 				return diag.FromErr(err)
 			}
 			toSave := []api.FeatureTag{}
+			if featureTags == nil {
+				_ = d.Set("tag", flattenTags(toSave))
+				return diags
+			}
 			for _, tfTag := range t.([]interface{}) {
 				tfTagMap := tfTag.(map[string]interface{})
 				for _, tag := range featureTags.Tags {
@@ -367,9 +385,11 @@ func resourceFeatureV2Read(ctx context.Context, d *schema.ResourceData, meta int
 func resourceFeatureV2ImportState(ctx context.Context, d *schema.ResourceData, meta interface{}) ([]*schema.ResourceData, error) {
 	parts := strings.Split(d.Id(), "/")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return nil, fmt.Errorf("unexpected format of ID (%s), expected project_id/feature_name", d.Id())
+		return nil, fmt.Errorf("unexpected format of ID (%q), expected project_id/feature_name", d.Id())
 	}
-	_ = d.Set("project_id", parts[0])
+	if err := d.Set("project_id", parts[0]); err != nil {
+		return nil, fmt.Errorf("error setting project_id: %w", err)
+	}
 	d.SetId(parts[1])
 	return []*schema.ResourceData{d}, nil
 }
