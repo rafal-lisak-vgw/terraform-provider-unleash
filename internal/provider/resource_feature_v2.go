@@ -327,15 +327,13 @@ func resourceFeatureV2Read(ctx context.Context, d *schema.ResourceData, meta int
 			}
 		}
 		_ = d.Set("environment", flattenEnvironments(toSave))
-	} else {
-		_ = d.Set("environment", flattenEnvironments(feature.Environments))
 	}
 
-	featureTags, _, err := client.FeatureTags.GetAllFeatureTags(feature.Name)
-	if err != nil {
-		return diag.FromErr(err)
-	}
 	if t, ok := d.GetOk("tag"); ok {
+		featureTags, _, err := client.FeatureTags.GetAllFeatureTags(feature.Name)
+		if err != nil {
+			return diag.FromErr(err)
+		}
 		toSave := []api.FeatureTag{}
 		for _, tfTag := range t.([]interface{}) {
 			for _, tag := range featureTags.Tags {
@@ -345,20 +343,37 @@ func resourceFeatureV2Read(ctx context.Context, d *schema.ResourceData, meta int
 			}
 		}
 		_ = d.Set("tag", flattenTags(toSave))
-	} else {
-		_ = d.Set("tag", flattenTags(featureTags.Tags))
 	}
 
 	return diags
 }
 
 func resourceFeatureV2ImportState(ctx context.Context, d *schema.ResourceData, meta interface{}) ([]*schema.ResourceData, error) {
-	parts := strings.SplitN(d.Id(), "/", 2)
+	parts := strings.Split(d.Id(), "/")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return nil, fmt.Errorf("unexpected format of ID (%s), expected project_id/feature_name", d.Id())
 	}
-	_ = d.Set("project_id", parts[0])
-	d.SetId(parts[1])
+	projectId := parts[0]
+	featureName := parts[1]
+
+	_ = d.Set("project_id", projectId)
+	d.SetId(featureName)
+
+	client := meta.(*ApiClients).PhilipsUnleashClient
+
+	feature, _, err := client.FeatureToggles.GetFeatureByName(projectId, featureName)
+	if err != nil {
+		return nil, fmt.Errorf("error reading feature %s in project %s: %w", featureName, projectId, err)
+	}
+
+	_ = d.Set("environment", flattenEnvironments(feature.Environments))
+
+	featureTags, _, err := client.FeatureTags.GetAllFeatureTags(featureName)
+	if err != nil {
+		return nil, fmt.Errorf("error reading tags for feature %s: %w", featureName, err)
+	}
+	_ = d.Set("tag", flattenTags(featureTags.Tags))
+
 	return []*schema.ResourceData{d}, nil
 }
 

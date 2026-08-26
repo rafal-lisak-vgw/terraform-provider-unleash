@@ -541,27 +541,8 @@ resource "unleash_feature_v2" "custom_fail" {
 	})
 }
 
-func TestResourceFeatureV2ImportState_parsesCompositeId(t *testing.T) {
-	d := schema.TestResourceDataRaw(t, resourceFeatureV2().Schema, map[string]interface{}{})
-	d.SetId("my-project/my-feature")
-
-	results, err := resourceFeatureV2ImportState(context.Background(), d, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %s", err)
-	}
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-	if results[0].Id() != "my-feature" {
-		t.Errorf("expected ID 'my-feature', got %q", results[0].Id())
-	}
-	if results[0].Get("project_id") != "my-project" {
-		t.Errorf("expected project_id 'my-project', got %q", results[0].Get("project_id"))
-	}
-}
-
 func TestResourceFeatureV2ImportState_rejectsInvalidId(t *testing.T) {
-	cases := []string{"", "no-slash", "/no-project", "no-feature/"}
+	cases := []string{"", "no-slash", "/no-project", "no-feature/", "project/feature/extra"}
 	for _, id := range cases {
 		d := schema.TestResourceDataRaw(t, resourceFeatureV2().Schema, map[string]interface{}{})
 		d.SetId(id)
