@@ -132,12 +132,7 @@ func TestAccResourceFeatureV2_import(t *testing.T) {
 	featureName := fmt.Sprintf("import_feature_%s", utils.RandomString(4))
 	resourceName := "unleash_feature_v2.import_test"
 
-	resource.UnitTest(t, resource.TestCase{
-		PreCheck:          func() { testAccPreCheck(t) },
-		ProviderFactories: providerFactories,
-		Steps: []resource.TestStep{
-			{
-				Config: fmt.Sprintf(`
+	config := fmt.Sprintf(`
 resource "unleash_feature_v2" "import_test" {
   name               = "%s"
   description        = "feature to import"
@@ -159,11 +154,23 @@ resource "unleash_feature_v2" "import_test" {
     }
   }
 
+  environment {
+    name    = "production"
+    enabled = false
+  }
+
   tag {
     type  = "simple"
     value = "import-test"
   }
-}`, featureName),
+}`, featureName)
+
+	resource.UnitTest(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: providerFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceName, "name", featureName),
 				),
@@ -185,10 +192,92 @@ func TestAccResourceFeatureV2_importInvalidId(t *testing.T) {
 		ProviderFactories: providerFactories,
 		Steps: []resource.TestStep{
 			{
+				Config: `
+resource "unleash_feature_v2" "import_test" {
+  name               = "placeholder"
+  type               = "release"
+  project_id         = "default"
+  archive_on_destroy = true
+}`,
 				ResourceName:  "unleash_feature_v2.import_test",
 				ImportState:   true,
 				ImportStateId: "missing-slash",
 				ExpectError:   regexp.MustCompile(`unexpected format of ID`),
+			},
+		},
+	})
+}
+
+func TestAccResourceFeatureV2_importWithConstraintsAndVariants(t *testing.T) {
+	featureName := fmt.Sprintf("import_complex_%s", utils.RandomString(4))
+	resourceName := "unleash_feature_v2.import_complex"
+
+	config := fmt.Sprintf(`
+resource "unleash_feature_v2" "import_complex" {
+  name               = "%s"
+  description        = "import test with constraints and variants"
+  type               = "release"
+  project_id         = "default"
+  archive_on_destroy = false
+
+  environment {
+    name    = "development"
+    enabled = true
+
+    strategy {
+      name = "flexibleRollout"
+      parameters = {
+        rollout    = "100"
+        stickiness = "default"
+        groupId    = "toggle"
+      }
+      constraint {
+        context_name = "appName"
+        operator     = "IN"
+        values       = ["service-a", "service-b"]
+      }
+      constraint {
+        context_name = "userId"
+        operator     = "NOT_IN"
+        values       = ["blocked-user"]
+      }
+      variant {
+        name        = "config"
+        weight_type = "variable"
+        payload {
+          type  = "json"
+          value = "{\"key\":\"value\"}"
+        }
+      }
+    }
+  }
+
+  environment {
+    name    = "production"
+    enabled = false
+  }
+}`, featureName)
+
+	resource.UnitTest(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: providerFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "environment.0.strategy.0.constraint.0.context_name", "appName"),
+					resource.TestCheckResourceAttr(resourceName, "environment.0.strategy.0.constraint.0.values.0", "service-a"),
+					resource.TestCheckResourceAttr(resourceName, "environment.0.strategy.0.constraint.1.context_name", "userId"),
+					resource.TestCheckResourceAttr(resourceName, "environment.0.strategy.0.variant.0.name", "config"),
+					resource.TestCheckResourceAttr(resourceName, "environment.0.strategy.0.variant.0.payload.#", "1"),
+				),
+			},
+			{
+				ResourceName:            resourceName,
+				ImportState:             true,
+				ImportStateId:           fmt.Sprintf("default/%s", featureName),
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"archive_on_destroy"},
 			},
 		},
 	})
